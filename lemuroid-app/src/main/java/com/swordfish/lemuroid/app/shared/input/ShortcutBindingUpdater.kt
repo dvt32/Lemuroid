@@ -13,14 +13,15 @@ import kotlinx.coroutines.runBlocking
 class ShortcutBindingUpdater(private val inputDeviceManager: InputDeviceManager, intent: Intent) {
     val extras = parseExtras(intent)
 
-    private var firstKeyCodeInCombo: Int? = null
+    private val pressedKeys = mutableSetOf<Int>()
+    private val comboKeys = mutableSetOf<Int>()
 
     fun getTitle(context: Context): String {
         return context.getString(R.string.shortcut_binding_update_title, extras.shortcutType.displayName())
     }
 
     fun getMessage(context: Context): String {
-        return context.getString(R.string.shortcut_binding_update_description, extras.device.name)
+        return context.getString(R.string.gamepad_binding_update_description, extras.device.name)
     }
 
     fun handleKeyEvent(event: KeyEvent): Boolean {
@@ -32,24 +33,28 @@ class ShortcutBindingUpdater(private val inputDeviceManager: InputDeviceManager,
     }
 
     private fun onKeyDown(event: KeyEvent): Boolean {
-        return isTargetedDevice(event.device)
+        if (!isTargetedDevice(event.device)) return false
+        pressedKeys.add(event.keyCode)
+        return true
     }
 
     private fun onKeyUp(event: KeyEvent): Boolean {
         if (!isTargetedDevice(event.device)) return false
 
-        if (firstKeyCodeInCombo == null) {
-            firstKeyCodeInCombo = event.keyCode
-            return false // wait for second key
-        } else {
-            if (firstKeyCodeInCombo == event.keyCode) return false // ignore same key press
-            val combo = Pair(InputKey(firstKeyCodeInCombo!!), InputKey(event.keyCode))
-            // TODO runBlocking here should go away.
-            runBlocking {
-                inputDeviceManager.updateShortcutBinding(event.device, extras.shortcutType, combo)
-            }
-            return true
+        pressedKeys.remove(event.keyCode)
+        if (pressedKeys.isNotEmpty()) {
+            // Another button is still held, so this is a combo rather than a single-button bind.
+            comboKeys.add(event.keyCode)
+            return false
         }
+
+        val keys = (comboKeys + event.keyCode).map(::InputKey).toSet()
+
+        // TODO runBlocking here should go away.
+        runBlocking {
+            inputDeviceManager.updateShortcutBinding(event.device, extras.shortcutType, keys)
+        }
+        return true
     }
 
     private fun isTargetedDevice(device: InputDevice?): Boolean {
